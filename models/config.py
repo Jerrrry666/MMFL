@@ -2,7 +2,8 @@ import importlib
 
 dataset_params = {
     'mnist': 10,
-    'cifar10': 10
+    'cifar10': 10,
+    'food101': 101,
 }
 
 model_params = {
@@ -14,7 +15,22 @@ model_params = {
     'cifar10': {
         'cnncifar': {}
     },
+    'food101': {
+        'mlaresnet18': {'num_classes': 101,
+                        'vocab_size': 30052,
+                        'embedding_dim': 256},
+        'mlaresnet34': {'num_classes': 101,
+                        'vocab_size': 30052,
+                        'embedding_dim': 256},
+        'mlaresnet50': {'num_classes': 101,
+                        'vocab_size': 30052,
+                        'embedding_dim': 256},
+        'mmresnet18': {'num_classes': 101,
+                       'vocab_size': 30052,
+                       'embedding_dim': 256},
+    }
 }
+
 
 def load_model(args):
     model_arg = args.model
