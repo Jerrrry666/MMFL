@@ -9,6 +9,8 @@ total_num: 5
 sr: 0.3
 rnd: 10
 test_gap: 1
+stopwatch_mode: real
+client_speed: 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
 
 # local training config
 bs: 10

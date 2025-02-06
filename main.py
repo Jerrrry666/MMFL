@@ -21,6 +21,8 @@ class FedSim:
 
         # === init other config ===
         self.acc_processor = DataProcessor()
+        self.acc_I_processor = DataProcessor()
+        self.acc_T_processor = DataProcessor()
         self.acc_shift_processor = DataProcessor()
 
         if not os.path.exists(f'./{args.suffix}'):
@@ -45,7 +47,10 @@ class FedSim:
                 # ===================== test =====================
                 ret_dict = self.server.test_all()
                 self.acc_processor.append(ret_dict['acc'])
+                self.acc_I_processor.append(ret_dict['acc_I'])
+                self.acc_T_processor.append(ret_dict['acc_T'])
 
+                # ===================== save checkpoint =====================
                 if rnd % 5 == 0:
                     self.save_context()
 
@@ -61,6 +66,8 @@ class FedSim:
                         self.output.write(f'{k}: {v:.2f}+-{ret_dict[std_str]:.2f}\n')
 
                 self.output.write('server, accuracy: %.2f, ' % ret_dict['acc'])
+                # self.output.write('server, accuracy_I: %.2f, ' % ret_dict['acc_I'])
+                # self.output.write('server, accuracy_T: %.2f\n' % ret_dict['acc_T'])
                 self.output.write('wall clock time: %.2f seconds\n' % self.server.wall_clock_time)
                 self.output.flush()
 

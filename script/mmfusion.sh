@@ -1,0 +1,3 @@
+python ../main.py --alg mmfusion --suffix mm-concat --device 3 --dataset food101-32dir-path-run --model mmresnet18 --total_num 32 --sr 0.125 --rnd 800 --bs 16 --epoch 1 --lr 0.01 --gamma 0.99 --recover 0 &
+
+#python ../main.py --alg mmlocal --suffix mmlocal-concat --device 3 --dataset food101-32dir-path-run --model mmresnet18 --total_num 32 --sr 0.125 --rnd 800 --bs 16 --epoch 1 --lr 0.01 --gamma 0.99 --recover 0 &

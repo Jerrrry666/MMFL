@@ -19,6 +19,9 @@ def args_parser():
     parser.add_argument('--sr', type=float, help="Clients sample rate")
     parser.add_argument('--rnd', type=int, help="Communication rounds")
 
+    parser.add_argument('--stopwatch_mode', type=str, help="Stopwatch mode: 'real' or 'given'")
+    parser.add_argument('--client_speed', nargs='+', type=float, help="Client speed")
+
     # ===== Local Training Setting =====
     parser.add_argument('--bs', type=int, help="Batch size")
     parser.add_argument('--epoch', type=int, help="Epoch num")
@@ -50,3 +53,17 @@ def args_parser():
         if v is None:
             setattr(spec_args, k, yaml_config[k])
     return spec_args
+
+
+def clients_setting(yaml_path):
+    """
+    read clients setting from yaml
+    such as clients_modal_state, clients_speed
+    """
+    with open(yaml_path, 'r') as file:
+        config = yaml.load(file, Loader=yaml.Loader)
+
+    clients_modal_state = config.get('clients_modal_state', {})
+    clients_speed = config.get('clients_speed', {})
+
+    return clients_modal_state, clients_speed

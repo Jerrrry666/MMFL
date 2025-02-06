@@ -18,7 +18,7 @@ model_params = {
 
 def load_model(args):
     model_arg = args.model
-    dataset_arg = args.dataset
+    dataset_arg = args.dataset.split('-')[0]
     args.class_num = dataset_params[dataset_arg]
 
     if dataset_arg not in model_params.keys():
