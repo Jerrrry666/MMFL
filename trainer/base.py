@@ -32,6 +32,7 @@ class BaseClient:
         self.metric = {
             'acc': DataProcessor(),
             'loss': DataProcessor(),
+            'train_time': DataProcessor(),
         }
 
         if self.dataset_train is not None:

@@ -10,7 +10,7 @@ def args_parser():
 
     # ===== Basic Setting ======
     parser.add_argument('--suffix', type=str, help="Suffix for file")
-    parser.add_argument('--device', type=str, help="Device to use")
+    parser.add_argument('--device', type=int, help="Device to use")
     parser.add_argument('--dataset', type=str)
     parser.add_argument('--model', type=str)
 
