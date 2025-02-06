@@ -8,7 +8,11 @@ from trainer.base import BaseClient, BaseServer
 class AsyncBaseClient(BaseClient):
     def __init__(self, id, args):
         super().__init__(id, args)
-        self.train_state = {}
+        self.client_time = 0  # second
+        self.train_state = None
+
+        self.modal_state = None if not hasattr(args, 'clients_modal_state') else args.clients_modal_state[id]
+        self.speed = None if not hasattr(args, 'client_speed') else args.client_speed[id]
 
     def run(self):
         raise NotImplementedError()
@@ -26,7 +30,7 @@ class AsyncBaseServer(BaseServer):
         self.priority_queue = []
         self.alpha = args.alpha
         self.MAX_CONCURRENCY = int(self.client_num * self.sample_rate)
-        self.staleness = [0 for _ in self.clients]
+        self.staleness = [0] * self.client_num
 
         # NOTE: sampled_clients means those sampled in current round
         # NOTE: active_clients means those are currently running

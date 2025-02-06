@@ -2,18 +2,22 @@ import random
 
 import torch
 import torch.nn.functional as F
+import yaml
 from torch.utils.data import DataLoader
 
-from trainer.base import BaseServer, BaseClient
+from trainer.asyncbase import AsyncBaseClient, AsyncBaseServer
 from utils.data_utils import FoodPathClientDataset
 
 
-class Client(BaseClient):
+class Client(AsyncBaseClient):
     def __init__(self, id, args):
         super().__init__(id, args)
         self.holding_modalities = []
         self.modality_choice = 0
         self.privious_feature = None
+
+        self.speed = 0
+        self.modal_state = {'modal0': 1, 'modal1': 1}
 
         self.dataset_train = FoodPathClientDataset(self.args, self.id, is_train=True)
         self.dataset_test = FoodPathClientDataset(self.args, self.id, is_train=False)
@@ -30,15 +34,17 @@ class Client(BaseClient):
                                       drop_last=True,
                                       num_workers=20)
 
+        # self.gs = GSPlugin()
         self.resnet_feature_out_dim = 512 if int(args.model[9:]) < 49 else 2048
         self.gm_tool = GM_tool(args, feature_shape=self.resnet_feature_out_dim)
 
         self.sever_round = 0
 
     def run(self):
+        # self.update_dataset_dataloader()
+
         self.train()
 
-    @BaseClient.record_time
     def train(self):
         # === train ===
         batch_loss = []
@@ -49,7 +55,7 @@ class Client(BaseClient):
 
         for epoch in range(self.epoch):
             current_modal = self._modality_choice_num2str()
-            for data_, label in self.loader_train:
+            for idx, (data_, label) in enumerate(self.loader_train):
                 self.optim.zero_grad()
                 data = data_[current_modal]
                 data, label = data.to(self.device), label.to(self.device)
@@ -73,44 +79,6 @@ class Client(BaseClient):
 
         self.privious_feature = current_features
 
-    # def train(self):
-    #     @self.timeloger
-    #     def _train():
-    #         # === train ===
-    #         batch_loss = []
-    #         self.model.train()
-    #         loader_len = len(self.loader_train)
-    #         current_features = torch.zeros(self.resnet_feature_out_dim, dtype=torch.float32,
-    #                                        device=self.device)
-    #
-    #         for epoch in range(self.epoch):
-    #             current_modal = self._modality_choice_num2str()
-    #             for data_, label in self.loader_train:
-    #                 self.optim.zero_grad()
-    #                 data = data_[current_modal]
-    #                 data, label = data.to(self.device), label.to(self.device)
-    #                 predict_logits = self.model(data, self.modality_choice)
-    #
-    #                 feature_out = self.model.feature_out  # feature from Extractor
-    #                 current_features += torch.mean(feature_out, dim=0) / loader_len
-    #
-    #                 loss = self.loss_func(predict_logits, label)
-    #                 loss.backward()
-    #                 batch_loss.append(loss.item())
-    #
-    #                 if self.sever_round != 0:
-    #                     # self.gs.before_update(self.model, feature_out, idx, len_dataloader, epoch)
-    #                     self.gm_tool.gradient_modification(self.model.head, self.privious_feature, self.sever_round)
-    #
-    #                 self.optim.step()
-    #
-    #         # === record loss ===
-    #         self.metric['loss'].append(sum(batch_loss) / len(batch_loss))
-    #
-    #         self.privious_feature = current_features
-    #
-    #     _train()
-
     def local_test(self):
         self.model.eval()
         correct = 0
@@ -121,10 +89,12 @@ class Client(BaseClient):
             # for i, (data_I, data_T) in enumerate(zip(self.loader_test_dict['I'], self.loader_test_dict['T'])):
             for i, (data, labels) in enumerate(self.loader_test):
                 outputs_list = []
+                labels = labels.to(self.device)
+
+                # test by uni-modal
                 for modal in ('I', 'T'):
                     data_ = data[modal]
                     data_ = data_.to(self.device)
-                    labels = labels.to(self.device)
 
                     outputs = self.model(data_, {'I': 0, 'T': 1}[modal])
                     outputs_list.append(outputs)
@@ -132,11 +102,13 @@ class Client(BaseClient):
                     _, predicted = torch.max(outputs.data, 1)
                     correct_mm[modal] += (predicted == labels).sum().item()
 
+                # test by multimodal
                 outputs = self.TT_dynamic_fusion(outputs_list)
 
                 _, predicted = torch.max(outputs.data, 1)
-                total += labels.size(0)
                 correct += (predicted == labels).sum().item()
+
+                total += labels.size(0)
         acc_I = 100.00 * correct_mm['I'] / total
         acc_T = 100.00 * correct_mm['T'] / total
         acc = 100.00 * correct / total
@@ -184,18 +156,60 @@ class Client(BaseClient):
 
         return fusion_logits
 
+    def model2tensor(self):
+        return torch.cat([param.data.view(-1)
+                          for is_p, param in zip(self.p_params, self.model.parameters())
+                          if is_p is False], dim=0)
+
+    def tensor2model(self, tensor):
+        param_index = 0
+        for is_p, param in zip(self.p_params, self.model.parameters()):
+            if not is_p:
+                # === get shape & total size ===
+                shape = param.shape
+                param_size = 1
+                for s in shape:
+                    param_size *= s
+
+                # === put value into param ===
+                # .clone() is a deep copy here
+                param.data = tensor[param_index: param_index + param_size].view(shape).detach().clone()
+                param_index += param_size
+
     def _modality_choice_num2str(self):
         return {0: 'I', 1: 'T'}[self.modality_choice]
 
 
-class Server(BaseServer):
+class Server(AsyncBaseServer):
     def __init__(self, id, args, clients):
         super().__init__(id, args, clients)
+        self.clients_speed = []
+
         self.modality_list = ['I', 'T']
         self.modality_num = len(self.modality_list)
         self.modality_choice = 0
 
         self.previous_feature = None
+
+        self.features_history = {'I': [], 'T': []}
+        self.prototype = {'I': None, 'T': None}
+
+        self.load_clients_setting()
+
+    def load_clients_setting(self):
+        # load speed and modal setting from yaml
+        yaml_path = './clients_state.yaml'
+        with open(yaml_path, 'r') as f:
+            data = yaml.safe_load(f)
+        self.clients_speed = {
+            int(client): data['speeds'][speed]
+            for client, speed in data['clients_speed'].items()}
+        self.clients_modal_state = {
+            int(client): data['modal_states'][state]
+            for client, state in data['clients_modal_state'].items()}
+        for client in self.clients:
+            client.speed = self.clients_speed[client.id]
+            client.modal_state = self.clients_modal_state[client.id]
 
     def run(self):
         self.sample()
@@ -215,7 +229,8 @@ class Server(BaseServer):
         # self.modality_choice = 0
 
     def sample(self):
-        sample_num = int(self.sample_rate * self.client_num)
+        # sample_num = int(self.sample_rate * self.client_num)
+        sample_num = 1
         self.sampled_clients = random.sample(self.clients, sample_num)
 
         self.update_modal_choice()

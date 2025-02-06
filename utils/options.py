@@ -10,7 +10,7 @@ def args_parser():
 
     # ===== Basic Setting ======
     parser.add_argument('--suffix', type=str, help="Suffix for file")
-    parser.add_argument('--device', type=int, help="Device to use")
+    parser.add_argument('--device', type=str, help="Device to use")
     parser.add_argument('--dataset', type=str)
     parser.add_argument('--model', type=str)
 
@@ -43,27 +43,38 @@ def args_parser():
     global_args = parser.parse_args()
     spec_alg = global_args.alg
     trainer_module = importlib.import_module(f'trainer.alg.{spec_alg}')
+
     spec_args = trainer_module.add_args(parser) if hasattr(trainer_module, 'add_args') else global_args
 
     # === read params from yaml ===
     # NOTE: Only overwrite when the value is None
-    with open('config.yaml', 'r') as f:
+    config_path = './config.yaml'
+    # config_path = '../script/config.yaml'  # debug
+    with open(config_path, 'r') as f:
         yaml_config = yaml.load(f.read(), Loader=yaml.Loader)
     for k, v in vars(spec_args).items():
         if v is None:
             setattr(spec_args, k, yaml_config[k])
-    return spec_args
 
-
-def clients_setting(yaml_path):
-    """
-    read clients setting from yaml
-    such as clients_modal_state, clients_speed
-    """
-    with open(yaml_path, 'r') as file:
-        config = yaml.load(file, Loader=yaml.Loader)
+    # === read clients setting from yaml if specified ===
+    clients_state_path = './clients_state.yaml'
+    # clients_state_path = '../script/clients_state.yaml'  # debug
+    with open(clients_state_path, 'r') as f:
+        config = yaml.load(f, Loader=yaml.Loader)
+    modal_states = config.get('modal_states', {})
+    speeds = config.get('speeds', {})
 
     clients_modal_state = config.get('clients_modal_state', {})
     clients_speed = config.get('clients_speed', {})
+    for id in range(spec_args.total_num):
+        clients_modal_state[id] = modal_states[clients_modal_state[id]]
+        clients_speed[id] = speeds[clients_speed[id]]
 
-    return clients_modal_state, clients_speed
+    spec_args.clients_modal_state = clients_modal_state
+    spec_args.clients_speed = clients_speed
+    return spec_args
+
+
+if __name__ == '__main__':
+    args = args_parser()
+    print(args)

@@ -1,12 +1,13 @@
+import random
+import time
+
 import torch
 import torch.nn as nn
-import time
-import random
-
-from utils.data_utils import read_client_data
-from models.config import load_model
-from utils.dataprocess import DataProcessor
 from torch.utils.data import DataLoader
+
+from models.config import load_model
+from utils.data_utils import read_client_data
+from utils.dataprocess import DataProcessor
 
 
 class BaseClient:
@@ -50,7 +51,7 @@ class BaseClient:
                 drop_last=True
             )
 
-        self.p_params = [False for _ in self.model.parameters()] # default: all global, no personalized
+        self.p_params = [False for _ in self.model.parameters()]  # default: all global, no personalized
         self.training_time = None
         self.lag_level = args.lag_level
         self.weight = 1
@@ -58,6 +59,18 @@ class BaseClient:
     def run(self):
         raise NotImplementedError()
 
+    def record_time(func):
+        def wrapper(self, *args, **kwargs):
+            start_time = time.time()
+            result = func(self, *args, **kwargs)
+            end_time = time.time()
+            func_name = func.__name__
+            self.metric[func_name + '_time'].append(end_time - start_time)
+            return result
+
+        return wrapper
+
+    @record_time
     def train(self):
         # === train ===
         batch_loss = []
@@ -141,7 +154,6 @@ class BaseClient:
         self.model.load_state_dict(params_dict)
 
 
-
 class BaseServer(BaseClient):
     def __init__(self, id, args, clients):
         super().__init__(id, args)
@@ -196,7 +208,6 @@ class BaseServer(BaseClient):
                                         torch.zeros_like(client_tensor),
                                         client_tensor)
             self.received_params.append(client_tensor * client.weight)
-
 
     def aggregate(self):
         assert (len(self.sampled_clients) > 0)
