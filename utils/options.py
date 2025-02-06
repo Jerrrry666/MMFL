@@ -1,5 +1,6 @@
 import argparse
 import importlib
+import random
 
 import yaml
 
@@ -68,7 +69,7 @@ def args_parser():
     clients_speed = config.get('clients_speed', {})
     for id in range(spec_args.total_num):
         clients_modal_state[id] = modal_states[clients_modal_state[id]]
-        clients_speed[id] = speeds[clients_speed[id]]
+        clients_speed[id] = speeds[clients_speed[id]] + random.randint(-100, 100) / 100
 
     spec_args.clients_modal_state = clients_modal_state
     spec_args.clients_speed = clients_speed

@@ -12,10 +12,6 @@ from utils.dataprocess import DataProcessor
 class Client(BaseClient):
     def __init__(self, id, args):
         super().__init__(id, args)
-        self.holding_modalities = []
-        self.modality_choice = 0
-        self.privious_feature = None
-
         self.dataset_train = FoodPathClientDataset(self.args, self.id, is_train=True)
         self.dataset_test = FoodPathClientDataset(self.args, self.id, is_train=False)
         self.loader_train = DataLoader(dataset=self.dataset_train,
@@ -32,11 +28,16 @@ class Client(BaseClient):
                                       num_workers=20)
 
         self.sever_round = 0
-        # new parameters for multimodal
+
+        # multimodal parameters
+        self.holding_modalities = []
+        self.modal_state = {'modal0': 1, 'modal1': 1}
+        self.modality_choice = 0
         self.metric.update({'acc_I': DataProcessor(), 'acc_T': DataProcessor()})
 
         # new parameters for alg/method
         self.resnet_feature_out_dim = 512 if int(args.model[9:]) < 49 else 2048
+        self.previous_feature = None
         self.gm_tool = GM_tool(args, feature_shape=self.resnet_feature_out_dim)
 
     def run(self):
@@ -68,14 +69,14 @@ class Client(BaseClient):
 
                 if self.sever_round != 0:
                     # self.gs.before_update(self.model, feature_out, idx, len_dataloader, epoch)
-                    self.gm_tool.gradient_modification(self.model.head, self.privious_feature, self.sever_round)
+                    self.gm_tool.gradient_modification(self.model.head, self.previous_feature, self.sever_round)
 
                 self.optim.step()
 
         # === record loss ===
         self.metric['loss'].append(sum(batch_loss) / len(batch_loss))
 
-        self.privious_feature = current_features
+        self.previous_feature = current_features
 
     # def train(self):
     #     @self.timeloger
@@ -248,7 +249,7 @@ class Server(BaseServer):
                                         client_tensor)
             self.received_params.append(client_tensor * client.weight)
 
-            self.previous_feature.append(client.privious_feature)
+            self.previous_feature.append(client.previous_feature)
 
         self.previous_feature = torch.mean(torch.stack(self.previous_feature), dim=0)
 

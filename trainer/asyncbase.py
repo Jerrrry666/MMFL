@@ -11,8 +11,7 @@ class AsyncBaseClient(BaseClient):
         self.client_time = 0  # second
         self.train_state = None
 
-        self.modal_state = None if not hasattr(args, 'clients_modal_state') else args.clients_modal_state[id]
-        self.speed = None if not hasattr(args, 'client_speed') else args.client_speed[id]
+        self.speed = None if not hasattr(args, 'clients_speed') else args.clients_speed[id]
 
     def run(self):
         raise NotImplementedError()
@@ -36,6 +35,9 @@ class AsyncBaseServer(BaseServer):
         # NOTE: active_clients means those are currently running
         self.active_clients = []
         self.aggr_id = -1
+
+        self.clients_modal_state = args.clients_modal_state
+        self.clients_speed = args.clients_speed
 
     def run(self):
         raise NotImplementedError()
@@ -62,7 +64,7 @@ class AsyncBaseServer(BaseServer):
             start_time = time.time()
             client.run()
             end_time = time.time()
-            client.training_time = (end_time - start_time) * client.lag_level
+            client.training_time = (end_time - start_time) * client.lag_level if client.speed is None else client.speed
             heapq.heappush(self.priority_queue, (self.wall_clock_time + client.training_time, client))
 
     def uplink(self):
