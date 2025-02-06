@@ -6,6 +6,7 @@ from torch.utils.data import DataLoader
 
 from trainer.base import BaseServer, BaseClient
 from utils.data_utils import FoodPathClientDataset
+from utils.dataprocess import DataProcessor
 
 
 class Client(BaseClient):
@@ -30,10 +31,13 @@ class Client(BaseClient):
                                       drop_last=True,
                                       num_workers=20)
 
+        self.sever_round = 0
+        # new parameters for multimodal
+        self.metric.update({'acc_I': DataProcessor(), 'acc_T': DataProcessor()})
+
+        # new parameters for alg/method
         self.resnet_feature_out_dim = 512 if int(args.model[9:]) < 49 else 2048
         self.gm_tool = GM_tool(args, feature_shape=self.resnet_feature_out_dim)
-
-        self.sever_round = 0
 
     def run(self):
         self.train()
@@ -196,6 +200,9 @@ class Server(BaseServer):
         self.modality_choice = 0
 
         self.previous_feature = None
+
+        # new parameters for multimodal
+        self.metric.update({'acc_I': DataProcessor(), 'acc_T': DataProcessor()})
 
     def run(self):
         self.sample()
