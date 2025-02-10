@@ -235,8 +235,8 @@ class Server(BaseServer):
         assert (len(self.sampled_clients) > 0)
         for client in self.sampled_clients:
             client.clone_model(self)
-            client.modality_choice = self.modality_choice
-            client.previous_feature = self.previous_feature
+            client.modal_choice = self.modality_choice
+            client.XXXprevious_featureXXX = self.previous_feature
 
     def uplink(self):
         assert (len(self.sampled_clients) > 0)
@@ -249,7 +249,7 @@ class Server(BaseServer):
                                         client_tensor)
             self.received_params.append(client_tensor * client.weight)
 
-            self.previous_feature.append(client.previous_feature)
+            self.previous_feature.append(client.XXXprevious_featureXXX)
 
         self.previous_feature = torch.mean(torch.stack(self.previous_feature), dim=0)
 
@@ -280,6 +280,7 @@ class GM_tool():
 
     def gradient_modification(self, head, hm, current_rnd):
         if current_rnd == self.current_rnd + 2:
+            # todo:这里逻辑有问题，只应用前一个模态的P_t处理。
             self.current_rnd += 1
             self.P_t_1 = torch.mean(torch.stack(self.P_t_history), dim=0)
         elif current_rnd == self.current_rnd + 1:

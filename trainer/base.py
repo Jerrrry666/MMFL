@@ -117,7 +117,8 @@ class BaseClient:
             param_group['lr'] = self.lr * (self.args.gamma ** self.server.round)
 
     def model2tensor(self):
-        return torch.cat([param.data.view(-1) for is_p, param in zip(self.p_params, self.model.parameters())
+        return torch.cat([param.data.view(-1)
+                          for is_p, param in zip(self.p_params, self.model.parameters())
                           if is_p is False], dim=0)
 
     def tensor2model(self, tensor):
@@ -134,6 +135,12 @@ class BaseClient:
                 # .clone() is a deep copy here
                 param.data = tensor[param_index: param_index + param_size].view(shape).detach().clone()
                 param_index += param_size
+
+    def model2state(self, model):
+        return model.state_dict()
+
+    def state2model(self, state, model):
+        model.load_state_dict(state)
 
     def save_model(self, path):
         # === only save p_params ===

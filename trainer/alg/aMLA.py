@@ -30,17 +30,16 @@ class Client(AsyncBaseClient):
         # multimodal parameters
         self.holding_modalities = []
         self.modal_state = {'modal0': 1, 'modal1': 1}
-        self.modality_choice = 0
-        self.metric.update({'acc_I': DataProcessor(), 'acc_T': DataProcessor()})
+        self.modal_choice = 0
+        self.metric.record({'acc_I': DataProcessor(), 'acc_T': DataProcessor()})
 
         # new parameters for alg/method
         self.resnet_feature_out_dim = 512 if int(args.model[9:]) < 49 else 2048
         self.gm_tool = GM_tool(args, feature_shape=self.resnet_feature_out_dim)
-        self.current_feature = []
+        self.current_features = ProtoType(101, self.resnet_feature_out_dim)  # upload to build prototype
+        self.current_features_num = 0
 
     def run(self):
-        # self.update_dataset_dataloader()
-
         self.train()
 
     @AsyncBaseClient.record_time
@@ -49,34 +48,31 @@ class Client(AsyncBaseClient):
         batch_loss = []
         self.model.train()
         loader_len = len(self.loader_train)
-        current_features = torch.zeros(self.resnet_feature_out_dim, dtype=torch.float32,
-                                       device=self.device)
-
+        proto = ProtoType(101, self.resnet_feature_out_dim)
         for epoch in range(self.epoch):
             current_modal = self._modality_choice_num2str()
-            for idx, (data_, label) in enumerate(self.loader_train):
+            for data_, label in self.loader_train:
                 self.optim.zero_grad()
                 data = data_[current_modal]
                 data, label = data.to(self.device), label.to(self.device)
-                predict_logits = self.model(data, self.modality_choice)
+                predict_logits = self.model(data, self.modal_choice)
 
                 feature_out = self.model.feature_out  # feature from Extractor
-                current_features += torch.mean(feature_out, dim=0) / loader_len
+                for lbl in label.unique():
+                    mask = label == lbl
+                    proto.record(lbl.item(), feature_out, mask)
 
                 loss = self.loss_func(predict_logits, label)
                 loss.backward()
                 batch_loss.append(loss.item())
-
-                if self.sever_round != 0:
-                    # self.gs.before_update(self.model, feature_out, idx, len_dataloader, epoch)
-                    self.gm_tool.gradient_modification(self.model.head, self.previous_feature, self.sever_round)
 
                 self.optim.step()
 
         # === record loss ===
         self.metric['loss'].append(sum(batch_loss) / len(batch_loss))
 
-        self.previous_feature = current_features
+        # output features of each class, value averaged by samlpe number
+        self.current_features = proto
 
     def local_test(self):
         self.model.eval()
@@ -176,7 +172,7 @@ class Client(AsyncBaseClient):
                 param_index += param_size
 
     def _modality_choice_num2str(self):
-        return {0: 'I', 1: 'T'}[self.modality_choice]
+        return {0: 'I', 1: 'T'}[self.modal_choice]
 
 
 class Server(AsyncBaseServer):
@@ -184,76 +180,122 @@ class Server(AsyncBaseServer):
         super().__init__(id, args, clients)
         self.clients_speed = []
 
+        # multimodal parameters
         self.modality_list = ['I', 'T']
         self.modality_num = len(self.modality_list)
-        self.modality_choice = 0
+        self.modal_choice = 0
 
-        self.previous_feature = None
-
-        self.features_history = {'I': [], 'T': []}
-        self.prototype = {'I': None, 'T': None}  # [each class prototype] for each modality
+        # alg/method parameters
+        self.encoders_buffer = {'I': [], 'T': []}
+        self.features_buffer = {'I': [[] * self.client_num],  # each client has a list to store features
+                                'T': [[] * self.client_num], }
+        self.prototype = {'I': [],
+                          'T': [], }
+        self.speed = 1.0
+        self.train_flag = False
+        self.previous_wall_clock_time = self.wall_clock_time
 
     def run(self):
+        """
+        begin: sample all clients to run
+        aggregate: process fastest one client
+        """
         self.sample()
         self.downlink()
         self.client_update()
         self.uplink()
         self.aggregate()
 
-    def downlink(self):
-        assert (len(self.sampled_clients) > 0)
-        for client in self.sampled_clients:
-            client.server_round = self.round
-            client.clone_model(self)
+        self.server_train()
 
-    def update_modal_choice(self):
-        self.modality_choice = self.round % 2
-        # self.modality_choice = 0
+    def server_train(self):
+        """After aggregation, simulate server train steps."""
+        gap_time = self.wall_clock_time - self.previous_wall_clock_time
+        self.previous_wall_clock_time = self.wall_clock_time
+        if gap_time > 0:
+            round_num = int(gap_time / self.speed)
+            for _ in range(round_num):
+                self.update_modal_choice()
+                current_modal = self._modality_choice_num2str()
+                # === train ===
+                self.model.train()
+                self.optim.zero_grad()
+
+                current_features = self.prototype[current_modal]  # [class0_proto, class1_proto, ...]
+                label = torch.tensor(range(len(current_features)), dtype=torch.long, device=self.device)
+                current_features, label = current_features.to(self.device), label.to(self.device)
+
+                predict_label = self.model.head(current_features)
+                loss = self.loss_func(predict_label, label)
+                loss.backward()
+
+                if self.round != 0:
+                    previous_feature = self.prototype[self.previous_modal_choice]
+                    self.gm_tool.gradient_modification(self.model.head, previous_feature, self.round)
+
+                self.optim.step()
 
     def sample(self):
-        # sample_num = int(self.sample_rate * self.client_num)
-        sample_num = 1
-        self.sampled_clients = random.sample(self.clients, sample_num)
-
         self.update_modal_choice()
-        total_samples = sum(len(client.dataset_train) for client in self.sampled_clients)
-        for client in self.sampled_clients:
-            client.weight = len(client.dataset_train) / total_samples
+
+        if len(self.active_clients) < self.MAX_CONCURRENCY:
+            clients_filtered = [client for client in self.clients if client not in self.active_clients]
+            sample_scale = self.MAX_CONCURRENCY - len(self.active_clients)
+
+            self.sampled_clients = random.sample(clients_filtered, sample_scale)
+            self.active_clients.extend(self.sampled_clients)
 
     def downlink(self):
         assert (len(self.sampled_clients) > 0)
         for client in self.sampled_clients:
             client.clone_model(self)
-            client.modality_choice = self.modality_choice
-            client.previous_feature = self.previous_feature
+            # client.modality_choice = self.modality_choice ## client chooose modality by self
 
-    def uplink(self):
-        assert (len(self.sampled_clients) > 0)
-        self.received_params = []
-        self.previous_feature = []
-        for client in self.sampled_clients:
-            client_tensor = client.model2tensor()
-            client_tensor = torch.where(torch.isnan(client_tensor),
-                                        torch.zeros_like(client_tensor),
-                                        client_tensor)
-            self.received_params.append(client_tensor * client.weight)
+    def aggregate(self):
+        # todo: upload prototype
+        # super().aggregate()
+        client = self.clients[self.aggr_id]
 
-            self.previous_feature.append(client.previous_feature)
+        # t_global = self.model2tensor()
+        # t_local = client.model2tensor()
+        # t_aggr = self.weight_decay() * t_local + (1 - self.weight_decay()) * t_global
+        # self.tensor2model(t_aggr)
 
-        self.previous_feature = torch.mean(torch.stack(self.previous_feature), dim=0)
+        encoder = client.model.encoders[client.modal_choice].state_dict()
 
-    # def test_all(self):
-    #     for client in self.clients:
-    #         client.clone_model(self)
-    #         client.local_test()
-    #
-    #         c_metric = client.metric
-    #         for m_key, m in self.metric.items():
-    #             if m_key == 'loss' and client not in self.sampled_clients:
-    #                 continue
-    #             m.append(c_metric[m_key].last())
-    #
-    #     return self.analyse_metric()
+        current_modal = client._modality_choice_num2str()
+        self.features_buffer[current_modal][self.aggr_id].append(client.current_features)
+        self.check_features_history_staleness(current_modal, self.aggr_id)
+
+    def check_features_history_staleness(self, modal_choice, client_id):
+        """check if the prototype have enough change to train"""
+        # when the staleness between the oldest and last prototype is greater than 100, remove the oldest one.
+        # and check the next one.
+        if self.features_buffer[modal_choice][client_id][-1].work_round - \
+                self.features_buffer[modal_choice][client_id][0].work_round > 100:
+            self.features_buffer[modal_choice][client_id].pop(0)
+            self.check_features_history_staleness(modal_choice, client_id)
+        else:
+            return
+
+    def rebuild_prototype(self, modal_choice):
+        """rebuild prototype by features_history"""
+        features = self.features_buffer[modal_choice]
+        proto = ProtoType(101, 512)
+        for feature in features:
+            for i in range(101):
+                proto.record(i, feature[i], torch.ones_like(feature[i], dtype=torch.bool))
+
+        self.prototype[modal_choice] = proto.proto()
+
+    def update_modal_choice(self):
+        self.previous_modal_choice = self.modal_choice
+        self.modal_choice = self.round % 2
+        self.round += 1
+        # self.modality_choice = 0
+
+    def _modality_choice_num2str(self):
+        return {0: 'I', 1: 'T'}[self.modal_choice]
 
 
 class GM_tool():
@@ -268,21 +310,18 @@ class GM_tool():
         self.current_rnd = 0
 
     def gradient_modification(self, head, hm, current_rnd):
-        if current_rnd == self.current_rnd + 2:
-            self.current_rnd += 1
-            self.P_t_1 = torch.mean(torch.stack(self.P_t_history), dim=0)
-        elif current_rnd == self.current_rnd + 1:
-            # update q_t
+        """modify gradient by previous one modality"""
+        if current_rnd == self.current_rnd + 1:
             q_t = self.calculate_q_t(hm, self.P_t, self.alpha)
-            # update P_t
+
             self.P_t = self.update_P_t(self.P_t_1, q_t, hm)
-            self.P_t_history.append(self.P_t)
+            # self.P_t_history.append(self.P_t)
 
             for param in head.parameters():
                 if param.grad is not None:
                     param.grad.data = self.modify_gradient(self.P_t, param.grad.data)
         else:
-            pass
+            raise ValueError('current_rnd is not equal to self.current_rnd + 1')
 
     @staticmethod
     def modify_gradient(P_t, grad):
@@ -307,3 +346,20 @@ class GM_tool():
     @staticmethod
     def update_P_t(P_t_1, q_t, hm_t):
         return P_t_1 - q_t @ torch.t(hm_t) @ P_t_1
+
+
+class ProtoType:
+    def __init__(self, label_num=101, feature_shape=512, work_round=0):
+        self.label_num = label_num
+        self.feature_shape = feature_shape
+        self.work_round = work_round
+        self.staleness = None
+        self.feature_sum = [torch.zeros(self.feature_shape, dtype=torch.float32, device=self.device)] * self.label_num
+        self.feature_count = [] * self.label_num
+
+    def record(self, label, feature_out, mask):
+        self.feature_sum[label] += torch.sum(feature_out[mask], dim=0)
+        self.feature_count[label] += mask.sum().item()
+
+    def proto(self):
+        return [self.feature_sum[i] / self.feature_count[i] for i in range(self.label_num)]

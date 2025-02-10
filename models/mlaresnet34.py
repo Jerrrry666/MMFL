@@ -1,4 +1,3 @@
-import torch
 import torch.nn as nn
 import torchvision.models as models
 
@@ -59,13 +58,10 @@ class Head(nn.Module):
         return self.fc(x)
 
 
-def mlaresnet34(args, params):
-    return MLAResNet34(**params)
+def mlaresnet34(args, **kwargs):
+    return MLAResNet34(args=args, **kwargs)
 
 
 if __name__ == '__main__':
-    img = torch.randn(1, 3, 224, 224)
-    # model=MLAResNet50(101)
-    model = models.resnet34(weights=None, num_classes=101)
-
-    logit = model.forward(img)
+    m = MLAResNet34(None, 101)
+    print(m)
